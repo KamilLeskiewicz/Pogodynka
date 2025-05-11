@@ -1,12 +1,14 @@
 "use client"
 
 import { Ionicons } from "@expo/vector-icons"
-import { LinearGradient } from "expo-linear-gradient"
+import { useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Animated,
+  Easing,
+  FlatList,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -17,11 +19,12 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from "react-native"
 import { useSearchStore } from "../../hooks/useSearchStore"
 import { useTheme } from "../../hooks/useTheme"
-import { fetchCurrentWeather } from "../../utils/api"
+import { useWeatherWidget } from "../../hooks/useWeatherWidget"
+import { fetchCurrentWeather, fetchHourlyForecast, type HourlyForecastItem } from "../../utils/api"
 
 interface WeatherData {
   name: string
@@ -52,43 +55,92 @@ interface WeatherData {
   }
   visibility: number
   dt: number
+  coord: {
+    lat: number
+    lon: number
+  }
+}
+
+const convertTemperature = (celsius: number, useMetricSystem: boolean): number => {
+  if (useMetricSystem) return celsius
+  return (celsius * 9) / 5 + 32
+}
+
+const getWeatherAnimation = (weatherMain: string): string => {
+  switch (weatherMain.toLowerCase()) {
+    case "clear":
+      return "https://assets2.lottiefiles.com/packages/lf20_2cwDXD.json"
+    case "clouds":
+      return "https://assets2.lottiefiles.com/packages/lf20_2cwDXD.json"
+    case "rain":
+      return "https://assets2.lottiefiles.com/packages/lf20_2cwDXD.json"
+    case "drizzle":
+      return "https://assets2.lottiefiles.com/packages/lf20_2cwDXD.json"
+    case "thunderstorm":
+      return "https://assets2.lottiefiles.com/packages/lf20_2cwDXD.json"
+    case "snow":
+      return "https://assets2.lottiefiles.com/packages/lf20_2cwDXD.json"
+    case "mist":
+    case "fog":
+    case "haze":
+      return "https://assets2.lottiefiles.com/packages/lf20_2cwDXD.json"
+    default:
+      return "https://assets2.lottiefiles.com/packages/lf20_2cwDXD.json"
+  }
 }
 
 export default function CurrentWeatherScreen() {
-  const { city, saveSearch } = useSearchStore()
+  const { city, saveSearch, favorites, toggleFavorite, preferences, setWeatherCache, getWeatherCache } = useSearchStore()
   const [searchText, setSearchText] = useState("")
   const [weather, setWeather] = useState<WeatherData | null>(null)
+  const [hourlyForecast, setHourlyForecast] = useState<HourlyForecastItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const { theme, isDark } = useTheme()
+  const router = useRouter()
+  const { updateWidget } = useWeatherWidget()
 
-  const fadeAnim = useState(new Animated.Value(0))[0]
+  const fadeAnim = useRef(new Animated.Value(0)).current
+  const slideAnim = useRef(new Animated.Value(50)).current
+  const hourlyFadeAnim = useRef(new Animated.Value(0)).current
+  const detailsFadeAnim = useRef(new Animated.Value(0)).current
 
-  useEffect(() => {
-    if (city) {
-      loadWeatherData(city)
-    }
-  }, [city])
+  const formatTemperature = useCallback((temp: number) => {
+    const convertedTemp = convertTemperature(temp, preferences.useMetricSystem)
+    return `${Math.round(convertedTemp)}°${preferences.useMetricSystem ? "C" : "F"}`
+  }, [preferences.useMetricSystem])
 
-  useEffect(() => {
-    if (weather) {
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 1000,
-        useNativeDriver: true,
-      }).start()
-    }
-  }, [weather])
-
-  const loadWeatherData = async (cityName: string) => {
+  const loadWeatherData = useCallback(async (cityName: string) => {
     setLoading(true)
     setError(null)
+
     fadeAnim.setValue(0)
+    slideAnim.setValue(50)
+    hourlyFadeAnim.setValue(0)
+    detailsFadeAnim.setValue(0)
 
     try {
-      const data = await fetchCurrentWeather(cityName)
-      setWeather(data)
+      const cachedData = getWeatherCache(cityName)
+      if (cachedData) {
+        setWeather(cachedData.weather)
+        setHourlyForecast(cachedData.hourly)
+        setLoading(false)
+        return
+      }
+
+      const [weatherData, hourlyData] = await Promise.all([
+        fetchCurrentWeather(cityName),
+        fetchHourlyForecast(cityName)
+      ])
+
+      setWeather(weatherData)
+      setHourlyForecast(hourlyData)
+
+      setWeatherCache(cityName, {
+        weather: weatherData,
+        hourly: hourlyData
+      })
     } catch (err) {
       setError("Nie udało się pobrać danych pogodowych. Sprawdź nazwę miasta.")
       console.error(err)
@@ -96,45 +148,133 @@ export default function CurrentWeatherScreen() {
       setLoading(false)
       setRefreshing(false)
     }
-  }
+  }, [fadeAnim, slideAnim, hourlyFadeAnim, detailsFadeAnim, getWeatherCache, setWeatherCache])
 
-  const onRefresh = () => {
-    setRefreshing(true)
+  useEffect(() => {
     if (city) {
       loadWeatherData(city)
     }
-  }
+  }, [city, loadWeatherData])
 
-  const handleSearch = () => {
+  useEffect(() => {
+    const updateWidgetData = async () => {
+      if (weather) {
+        try {
+          await updateWidget(
+            formatTemperature(weather.main.temp),
+            weather.weather[0]?.description || "",
+            weather.name
+          )
+        } catch (error) {
+          console.error('Failed to update widget:', error)
+        }
+      }
+    }
+
+    updateWidgetData()
+  }, [weather, formatTemperature, updateWidget])
+
+  const handleSearch = useCallback(() => {
     if (searchText.trim()) {
       saveSearch(searchText.trim())
       setSearchText("")
     }
-  }
+  }, [searchText, saveSearch])
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true)
+    if (city) {
+      loadWeatherData(city)
+    }
+  }, [city, loadWeatherData])
+
+  const handleToggleFavorite = useCallback(() => {
+    if (city) {
+      toggleFavorite(city)
+    }
+  }, [city, toggleFavorite])
+
+  const renderHourlyItem = useCallback(({ item }: { item: HourlyForecastItem }) => {
+    return (
+      <View style={[styles.hourlyItem, { backgroundColor: theme.cardBackground }]}>
+        <Text style={[styles.hourlyTime, { color: theme.textColor }]}>{formatHourlyTime(item.dt_txt)}</Text>
+        <Text style={[styles.hourlyDate, { color: theme.secondaryTextColor }]}>{formatHourlyDate(item.dt_txt)}</Text>
+        <Image
+          source={{ uri: `https://openweathermap.org/img/wn/${item.weather.icon}@2x.png` }}
+          style={styles.hourlyIcon}
+        />
+        <Text style={[styles.hourlyTemp, { color: theme.textColor }]}>
+          {formatTemperature(item.temp)}
+        </Text>
+        <View style={styles.hourlyDetailRow}>
+          <Ionicons name="water-outline" size={12} color={theme.secondaryTextColor} />
+          <Text style={[styles.hourlyDetailText, { color: theme.secondaryTextColor }]}>{item.humidity}%</Text>
+        </View>
+        <View style={styles.hourlyDetailRow}>
+          <Ionicons name="rainy-outline" size={12} color={theme.secondaryTextColor} />
+          <Text style={[styles.hourlyDetailText, { color: theme.secondaryTextColor }]}>
+            {Math.round(item.pop * 100)}%
+          </Text>
+        </View>
+      </View>
+    )
+  }, [theme, formatTemperature])
+
+  useEffect(() => {
+    if (weather) {
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 500,
+            useNativeDriver: true,
+            easing: Easing.out(Easing.cubic),
+          }),
+          Animated.timing(slideAnim, {
+            toValue: 0,
+            duration: 500,
+            useNativeDriver: true,
+            easing: Easing.out(Easing.cubic),
+          }),
+        ]),
+        Animated.timing(hourlyFadeAnim, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+          delay: 100,
+        }),
+        Animated.timing(detailsFadeAnim, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+      ]).start()
+    }
+  }, [weather])
 
   const getWeatherIcon = (iconCode: string) => {
     return `https://openweathermap.org/img/wn/${iconCode}@4x.png`
   }
 
-  const getWeatherBackground = (weatherMain: string): string[] => {
+  const getWeatherColor = (weatherMain: string): string => {
     switch (weatherMain.toLowerCase()) {
       case "clear":
-        return isDark ? ["#0f2027", "#203a43", "#2c5364"] : ["#00b4db", "#0083b0", "#6dd5ed"]
+        return isDark ? "#1565C0" : "#2196F3" 
       case "clouds":
-        return isDark ? ["#2c3e50", "#4ca1af", "#2c3e50"] : ["#bdc3c7", "#2c3e50", "#bdc3c7"]
+        return isDark ? "#455A64" : "#78909C" 
       case "rain":
       case "drizzle":
-        return isDark ? ["#373b44", "#4286f4", "#373b44"] : ["#5c6bc0", "#3949ab", "#5c6bc0"]
+        return isDark ? "#0D47A1" : "#1976D2" 
       case "thunderstorm":
-        return isDark ? ["#16222a", "#3a6073", "#16222a"] : ["#4b6cb7", "#182848", "#4b6cb7"]
+        return isDark ? "#4A148C" : "#6A1B9A" 
       case "snow":
-        return isDark ? ["#304352", "#d7d2cc", "#304352"] : ["#e6dada", "#274046", "#e6dada"]
+        return isDark ? "#546E7A" : "#90A4AE" 
       case "mist":
       case "fog":
       case "haze":
-        return isDark ? ["#3e5151", "#decba4", "#3e5151"] : ["#757f9a", "#d7dde8", "#757f9a"]
+        return isDark ? "#37474F" : "#607D8B" 
       default:
-        return isDark ? ["#232526", "#414345", "#232526"] : ["#e0eafc", "#cfdef3", "#e0eafc"]
+        return isDark ? "#1565C0" : "#2196F3" 
     }
   }
 
@@ -143,9 +283,38 @@ export default function CurrentWeatherScreen() {
     return date.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })
   }
 
+  const formatHourlyTime = (dtTxt: string) => {
+    const date = new Date(dtTxt)
+    return date.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })
+  }
+
+  const formatHourlyDate = (dtTxt: string) => {
+    const date = new Date(dtTxt)
+    return date.toLocaleDateString("pl-PL", { day: "numeric", month: "short" })
+  }
+
   const getWindDirection = (deg: number) => {
     const directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
     return directions[Math.round(deg / 45) % 8]
+  }
+
+  const isFavorite = () => {
+    return favorites.some((fav) => fav.name === city)
+  }
+
+  const openWeatherMap = () => {
+    router.push("/map")
+  }
+
+  const renderWeatherIcon = () => {
+    if (!weather?.weather[0]?.icon) return null
+
+    return (
+      <Image 
+        source={{ uri: getWeatherIcon(weather.weather[0].icon) }} 
+        style={styles.weatherIcon} 
+      />
+    )
   }
 
   return (
@@ -183,6 +352,7 @@ export default function CurrentWeatherScreen() {
               tintColor={theme.accentColor}
             />
           }
+          showsVerticalScrollIndicator={false}
         >
           {loading && !refreshing ? (
             <View style={styles.loaderContainer}>
@@ -203,23 +373,34 @@ export default function CurrentWeatherScreen() {
               </TouchableOpacity>
             </View>
           ) : weather ? (
-            <Animated.View style={[styles.weatherContainer, { opacity: fadeAnim }]}>
-              <LinearGradient
-                colors={getWeatherBackground(weather.weather[0]?.main || "Clear") as any}
-                style={styles.weatherCard}
+            <View style={styles.weatherContainer}>
+              <Animated.View
+                style={[
+                  styles.weatherCard,
+                  {
+                    backgroundColor: getWeatherColor(weather.weather[0]?.main || "Clear"),
+                    opacity: fadeAnim,
+                    transform: [{ translateY: slideAnim }],
+                  },
+                ]}
               >
                 <View style={styles.locationContainer}>
                   <Ionicons name="location" size={24} color="white" />
                   <Text style={styles.cityName}>
                     {weather.name}, {weather.sys.country}
                   </Text>
+                  <TouchableOpacity onPress={handleToggleFavorite} style={styles.favoriteButton}>
+                    <Ionicons
+                      name={isFavorite() ? "star" : "star-outline"}
+                      size={24}
+                      color={isFavorite() ? "#FFD700" : "white"}
+                    />
+                  </TouchableOpacity>
                 </View>
 
                 <View style={styles.mainWeather}>
-                  {weather.weather[0]?.icon && (
-                    <Image source={{ uri: getWeatherIcon(weather.weather[0].icon) }} style={styles.weatherIcon} />
-                  )}
-                  <Text style={styles.temperature}>{Math.round(weather.main.temp)}°C</Text>
+                  {renderWeatherIcon()}
+                  <Text style={styles.temperature}>{formatTemperature(weather.main.temp)}</Text>
                 </View>
 
                 <Text style={styles.description}>{weather.weather[0]?.description}</Text>
@@ -227,11 +408,11 @@ export default function CurrentWeatherScreen() {
                 <View style={styles.minMaxContainer}>
                   <View style={styles.minMaxItem}>
                     <Ionicons name="arrow-down" size={16} color="white" />
-                    <Text style={styles.minMaxText}>Min: {Math.round(weather.main.temp_min)}°C</Text>
+                    <Text style={styles.minMaxText}>Min: {formatTemperature(weather.main.temp_min)}</Text>
                   </View>
                   <View style={styles.minMaxItem}>
                     <Ionicons name="arrow-up" size={16} color="white" />
-                    <Text style={styles.minMaxText}>Max: {Math.round(weather.main.temp_max)}°C</Text>
+                    <Text style={styles.minMaxText}>Max: {formatTemperature(weather.main.temp_max)}</Text>
                   </View>
                 </View>
 
@@ -245,9 +426,47 @@ export default function CurrentWeatherScreen() {
                     <Text style={styles.sunTimeText}>Zachód: {formatTime(weather.sys.sunset)}</Text>
                   </View>
                 </View>
-              </LinearGradient>
 
-              <View style={[styles.detailsContainer, { backgroundColor: theme.cardBackground }]}>
+                <TouchableOpacity 
+                  style={styles.mapButton} 
+                  onPress={openWeatherMap}
+                >
+                  <Ionicons name="map-outline" size={24} color="white" />
+                  <Text style={styles.mapButtonText}>Otwórz mapę pogodową</Text>
+                </TouchableOpacity>
+              </Animated.View>
+
+              {hourlyForecast.length > 0 && (
+                <Animated.View
+                  style={[
+                    styles.hourlyContainer,
+                    {
+                      backgroundColor: theme.cardBackground,
+                      opacity: hourlyFadeAnim,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.hourlyTitle, { color: theme.textColor }]}>Prognoza godzinowa</Text>
+                  <FlatList
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    data={hourlyForecast}
+                    renderItem={renderHourlyItem}
+                    keyExtractor={(item) => item.dt.toString()}
+                    contentContainerStyle={styles.hourlyList}
+                  />
+                </Animated.View>
+              )}
+
+              <Animated.View
+                style={[
+                  styles.detailsContainer,
+                  {
+                    backgroundColor: theme.cardBackground,
+                    opacity: detailsFadeAnim,
+                  },
+                ]}
+              >
                 <Text style={[styles.detailsTitle, { color: theme.textColor }]}>Szczegóły</Text>
 
                 <View style={styles.detailsGrid}>
@@ -260,7 +479,7 @@ export default function CurrentWeatherScreen() {
                     <Ionicons name="thermometer-outline" size={24} color={theme.accentColor} />
                     <Text style={[styles.detailLabel, { color: theme.secondaryTextColor }]}>Odczuwalna</Text>
                     <Text style={[styles.detailValue, { color: theme.textColor }]}>
-                      {Math.round(weather.main.feels_like)}°C
+                      {formatTemperature(weather.main.feels_like)}
                     </Text>
                   </View>
 
@@ -327,8 +546,8 @@ export default function CurrentWeatherScreen() {
                 <Text style={[styles.updateTime, { color: theme.secondaryTextColor }]}>
                   Ostatnia aktualizacja: {new Date(weather.dt * 1000).toLocaleString("pl-PL")}
                 </Text>
-              </View>
-            </Animated.View>
+              </Animated.View>
+            </View>
           ) : (
             <View style={styles.emptyContainer}>
               <Ionicons name="partly-sunny-outline" size={64} color={theme.secondaryTextColor} />
@@ -426,16 +645,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 16,
     overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 5,
   },
   locationContainer: {
     flexDirection: "row",
     alignItems: "center",
+    width: "100%",
   },
   cityName: {
     fontSize: 24,
     fontWeight: "bold",
     color: "white",
     marginLeft: 8,
+    flex: 1,
+  },
+  favoriteButton: {
+    padding: 8,
   },
   mainWeather: {
     alignItems: "center",
@@ -486,9 +715,70 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginLeft: 4,
   },
+  hourlyContainer: {
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  hourlyTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 12,
+  },
+  hourlyList: {
+    paddingVertical: 8,
+  },
+  hourlyItem: {
+    padding: 12,
+    borderRadius: 12,
+    marginRight: 12,
+    alignItems: "center",
+    width: 90,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  hourlyTime: {
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  hourlyDate: {
+    fontSize: 12,
+    marginBottom: 8,
+  },
+  hourlyIcon: {
+    width: 50,
+    height: 50,
+  },
+  hourlyTemp: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginVertical: 4,
+  },
+  hourlyDetailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 4,
+  },
+  hourlyDetailText: {
+    fontSize: 12,
+    marginLeft: 4,
+  },
   detailsContainer: {
     borderRadius: 16,
     padding: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   detailsTitle: {
     fontSize: 18,
@@ -520,5 +810,21 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontSize: 12,
     marginTop: 8,
+  },
+  mapButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 16,
+    width: '100%',
+  },
+  mapButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
   },
 })

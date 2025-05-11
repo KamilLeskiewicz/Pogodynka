@@ -20,6 +20,9 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: theme.cardBackground,
           borderTopColor: theme.borderColor,
+          height: 80,
+          paddingBottom: 14,
+          paddingTop: 2,
         },
         headerStyle: {
           backgroundColor: theme.cardBackground,
@@ -35,8 +38,15 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: "Aktualna",
-          tabBarIcon: ({ color, size }) => <Ionicons name="sunny" size={size} color={color} />,
+          title: "Pogoda",
+          tabBarIcon: ({ color, size }) => <Ionicons name="partly-sunny" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="map"
+        options={{
+          title: "Mapa",
+          tabBarIcon: ({ color, size }) => <Ionicons name="map" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -47,10 +57,24 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="favorites"
+        options={{
+          title: "Ulubione",
+          tabBarIcon: ({ color, size }) => <Ionicons name="star" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="history"
         options={{
           title: "Historia",
           tabBarIcon: ({ color, size }) => <Ionicons name="time" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: "Ustawienia",
+          tabBarIcon: ({ color, size }) => <Ionicons name="settings-outline" size={size} color={color} />,
         }}
       />
     </Tabs>

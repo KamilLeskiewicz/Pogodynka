@@ -1,16 +1,17 @@
 "use client"
 
 import { Ionicons } from "@expo/vector-icons"
-import { LinearGradient } from "expo-linear-gradient"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Animated,
   Dimensions,
+  Easing,
   FlatList,
   Image,
   RefreshControl,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -18,7 +19,7 @@ import {
 } from "react-native"
 import { useSearchStore } from "../../hooks/useSearchStore"
 import { useTheme } from "../../hooks/useTheme"
-import { fetchWeeklyForecast, type ForecastData } from "../../utils/api"
+import { fetchHourlyForecast, fetchWeeklyForecast, type ForecastData, type HourlyForecastItem } from "../../utils/api"
 
 interface DailyForecast {
   date: string
@@ -44,6 +45,7 @@ interface DailyForecast {
   sunrise?: number
   sunset?: number
   expanded: boolean
+  hourlyData?: HourlyForecastItem[]
 }
 
 const { width } = Dimensions.get("window")
@@ -56,19 +58,46 @@ export default function ForecastScreen() {
   const [refreshing, setRefreshing] = useState(false)
   const { theme, isDark } = useTheme()
 
+
+  const fadeAnim = useRef(new Animated.Value(0)).current
+  const expandAnims = useRef<{ [key: string]: Animated.Value }>({}).current
+
   useEffect(() => {
     if (city) {
       loadForecastData(city)
     }
   }, [city])
 
+  useEffect(() => {
+    if (forecast.length > 0 && !loading) {
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: true,
+        easing: Easing.out(Easing.cubic),
+      }).start()
+    } else {
+      fadeAnim.setValue(0)
+    }
+  }, [forecast, loading])
+
   const loadForecastData = async (cityName: string) => {
     setLoading(true)
     setError(null)
+    fadeAnim.setValue(0)
+
     try {
       const data = await fetchWeeklyForecast(cityName)
+      const hourlyData = await fetchHourlyForecast(cityName)
 
-      const dailyData = groupForecastByDay(data.list)
+      const dailyData = groupForecastByDay(data.list, hourlyData)
+
+      dailyData.forEach((item) => {
+        if (!expandAnims[item.date]) {
+          expandAnims[item.date] = new Animated.Value(0)
+        }
+      })
+
       setForecast(dailyData)
     } catch (err) {
       setError("Nie udało się pobrać prognozy. Sprawdź nazwę miasta.")
@@ -86,12 +115,28 @@ export default function ForecastScreen() {
     }
   }
 
-  const groupForecastByDay = (forecastList: ForecastData["list"]): DailyForecast[] => {
+  const groupForecastByDay = (
+    forecastList: ForecastData["list"],
+    hourlyData: HourlyForecastItem[],
+  ): DailyForecast[] => {
     const grouped: Record<string, DailyForecast> = {}
+
+    const hourlyByDay: Record<string, HourlyForecastItem[]> = {}
+    hourlyData.forEach((item) => {
+      const date = new Date(item.dt_txt)
+      const day = date.toLocaleDateString("pl-PL", { day: "numeric", month: "numeric" })
+
+      if (!hourlyByDay[day]) {
+        hourlyByDay[day] = []
+      }
+
+      hourlyByDay[day].push(item)
+    })
 
     forecastList.forEach((item) => {
       const date = new Date(item.dt * 1000)
       const day = date.toLocaleDateString("pl-PL", { weekday: "long", month: "long", day: "numeric" })
+      const shortDay = date.toLocaleDateString("pl-PL", { day: "numeric", month: "numeric" })
       const hour = date.getHours()
 
       if (!grouped[day]) {
@@ -116,6 +161,7 @@ export default function ForecastScreen() {
           pop: item.pop || 0,
           visibility: item.visibility || 0,
           expanded: false,
+          hourlyData: hourlyByDay[shortDay] || [],
         }
       } else {
         grouped[day].temp.min = Math.min(grouped[day].temp.min, item.main.temp)
@@ -143,94 +189,159 @@ export default function ForecastScreen() {
     return `https://openweathermap.org/img/wn/${iconCode}@2x.png`
   }
 
-  const getWeatherBackground = (weatherMain: string): string[] => {
+  const getWeatherColor = (weatherMain: string): string => {
     switch (weatherMain.toLowerCase()) {
       case "clear":
-        return isDark ? ["#0f2027", "#203a43", "#2c5364"] : ["#00b4db", "#0083b0", "#6dd5ed"]
+        return isDark ? "#1565C0" : "#2196F3" 
       case "clouds":
-        return isDark ? ["#2c3e50", "#4ca1af", "#2c3e50"] : ["#bdc3c7", "#2c3e50", "#bdc3c7"]
+        return isDark ? "#455A64" : "#78909C" 
       case "rain":
       case "drizzle":
-        return isDark ? ["#373b44", "#4286f4", "#373b44"] : ["#5c6bc0", "#3949ab", "#5c6bc0"]
+        return isDark ? "#0D47A1" : "#1976D2" 
       case "thunderstorm":
-        return isDark ? ["#16222a", "#3a6073", "#16222a"] : ["#4b6cb7", "#182848", "#4b6cb7"]
+        return isDark ? "#4A148C" : "#6A1B9A" 
       case "snow":
-        return isDark ? ["#304352", "#d7d2cc", "#304352"] : ["#e6dada", "#274046", "#e6dada"]
+        return isDark ? "#546E7A" : "#90A4AE" 
       case "mist":
       case "fog":
       case "haze":
-        return isDark ? ["#3e5151", "#decba4", "#3e5151"] : ["#757f9a", "#d7dde8", "#757f9a"]
+        return isDark ? "#37474F" : "#607D8B" 
       default:
-        return isDark ? ["#232526", "#414345", "#232526"] : ["#e0eafc", "#cfdef3", "#e0eafc"]
+        return isDark ? "#1565C0" : "#2196F3" 
     }
   }
 
   const toggleExpand = (index: number) => {
     const newForecast = [...forecast]
-    newForecast[index].expanded = !newForecast[index].expanded
+    const item = newForecast[index]
+    const isExpanding = !item.expanded
+
+    item.expanded = isExpanding
     setForecast(newForecast)
+
+    Animated.timing(expandAnims[item.date], {
+      toValue: isExpanding ? 1 : 0,
+      duration: 300,
+      useNativeDriver: false,
+      easing: Easing.inOut(Easing.ease),
+    }).start()
+  }
+
+  const formatHourlyTime = (dtTxt: string) => {
+    const date = new Date(dtTxt)
+    return date.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })
+  }
+
+  const renderHourlyItem = ({ item }: { item: HourlyForecastItem }) => {
+    return (
+      <View style={[styles.hourlyItem, { backgroundColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.05)" }]}>
+        <Text style={[styles.hourlyTime, { color: "white" }]}>{formatHourlyTime(item.dt_txt)}</Text>
+        <Image
+          source={{ uri: `https://openweathermap.org/img/wn/${item.weather.icon}@2x.png` }}
+          style={styles.hourlyIcon}
+        />
+        <Text style={[styles.hourlyTemp, { color: "white" }]}>{Math.round(item.temp)}°C</Text>
+        <View style={styles.hourlyDetailRow}>
+          <Ionicons name="water-outline" size={12} color="white" />
+          <Text style={[styles.hourlyDetailText, { color: "white" }]}>{item.humidity}%</Text>
+        </View>
+        <View style={styles.hourlyDetailRow}>
+          <Ionicons name="rainy-outline" size={12} color="white" />
+          <Text style={[styles.hourlyDetailText, { color: "white" }]}>{Math.round(item.pop * 100)}%</Text>
+        </View>
+      </View>
+    )
   }
 
   const renderForecastItem = ({ item, index }: { item: DailyForecast; index: number }) => {
     const weatherMain = item.weather.main || "Clear"
-    const gradientColors = getWeatherBackground(weatherMain)
+    const backgroundColor = getWeatherColor(weatherMain)
+
+    const expandHeight =
+      expandAnims[item.date]?.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, item.hourlyData && item.hourlyData.length > 0 ? 500 : 400],
+        extrapolate: "clamp",
+      }) || new Animated.Value(0)
+
+    const rotateAnim =
+      expandAnims[item.date]?.interpolate({
+        inputRange: [0, 1],
+        outputRange: ["0deg", "180deg"],
+      }) || new Animated.Value(0)
 
     return (
-      <Animated.View style={styles.forecastItemContainer}>
-        <LinearGradient
-          colors={gradientColors as any}
-          style={[styles.forecastItem, { backgroundColor: theme.cardBackground }]}
-        >
+      <Animated.View
+        style={[
+          styles.forecastItemContainer,
+          {
+            opacity: fadeAnim,
+            transform: [{ scale: fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1] }) }],
+          },
+        ]}
+      >
+        <View style={[styles.forecastItem, { backgroundColor }]}>
           <TouchableOpacity style={styles.forecastHeader} onPress={() => toggleExpand(index)} activeOpacity={0.8}>
             <View style={styles.dayContainer}>
-              <Text style={[styles.dayText, { color: theme.textColor }]}>{item.date}</Text>
+              <Text style={styles.dayText}>{item.date}</Text>
               <View style={styles.weatherIconContainer}>
                 <Image source={{ uri: getWeatherIcon(item.weather.icon) }} style={styles.weatherIcon} />
-                <Text style={[styles.description, { color: theme.textColor }]}>{item.weather.description}</Text>
+                <Text style={styles.description}>{item.weather.description}</Text>
               </View>
             </View>
 
             <View style={styles.tempContainer}>
               <Text style={styles.maxTemp}>{Math.round(item.temp.max)}°</Text>
               <Text style={styles.minTemp}>{Math.round(item.temp.min)}°</Text>
-              <Ionicons name={item.expanded ? "chevron-up" : "chevron-down"} size={24} color={theme.textColor} />
+              <Animated.View style={{ transform: [{ rotate: rotateAnim }] }}>
+                <Ionicons name="chevron-down" size={24} color="white" />
+              </Animated.View>
             </View>
           </TouchableOpacity>
 
-          {item.expanded && (
+          <Animated.View style={[styles.expandedContentWrapper, { height: expandHeight }]}>
             <View style={styles.expandedContent}>
               <View style={styles.divider} />
 
+              {item.hourlyData && item.hourlyData.length > 0 && (
+                <View style={styles.hourlyContainer}>
+                  <Text style={styles.sectionTitle}>Prognoza godzinowa</Text>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.hourlyList}
+                  >
+                    {item.hourlyData.map((hourlyItem) => (
+                      <View key={hourlyItem.dt} style={styles.hourlyItemWrapper}>
+                        {renderHourlyItem({ item: hourlyItem })}
+                      </View>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+
               <View style={styles.temperatureSection}>
-                <Text style={[styles.sectionTitle, { color: theme.textColor }]}>Temperatura</Text>
+                <Text style={styles.sectionTitle}>Temperatura</Text>
                 <View style={styles.tempDetails}>
                   <View style={styles.tempDetailItem}>
-                    <Ionicons name="sunny-outline" size={20} color={theme.textColor} />
-                    <Text style={[styles.tempDetailLabel, { color: theme.textColor }]}>Dzień</Text>
-                    <Text style={[styles.tempDetailValue, { color: theme.textColor }]}>
-                      {Math.round(item.temp.day || item.temp.max)}°C
-                    </Text>
+                    <Ionicons name="sunny-outline" size={20} color="white" />
+                    <Text style={styles.tempDetailLabel}>Dzień</Text>
+                    <Text style={styles.tempDetailValue}>{Math.round(item.temp.day || item.temp.max)}°C</Text>
                   </View>
                   <View style={styles.tempDetailItem}>
-                    <Ionicons name="moon-outline" size={20} color={theme.textColor} />
-                    <Text style={[styles.tempDetailLabel, { color: theme.textColor }]}>Noc</Text>
-                    <Text style={[styles.tempDetailValue, { color: theme.textColor }]}>
-                      {Math.round(item.temp.night || item.temp.min)}°C
-                    </Text>
+                    <Ionicons name="moon-outline" size={20} color="white" />
+                    <Text style={styles.tempDetailLabel}>Noc</Text>
+                    <Text style={styles.tempDetailValue}>{Math.round(item.temp.night || item.temp.min)}°C</Text>
                   </View>
                   <View style={styles.tempDetailItem}>
-                    <Ionicons name="partly-sunny-outline" size={20} color={theme.textColor} />
-                    <Text style={[styles.tempDetailLabel, { color: theme.textColor }]}>Rano</Text>
-                    <Text style={[styles.tempDetailValue, { color: theme.textColor }]}>
-                      {Math.round(item.temp.morn || item.temp.min)}°C
-                    </Text>
+                    <Ionicons name="partly-sunny-outline" size={20} color="white" />
+                    <Text style={styles.tempDetailLabel}>Rano</Text>
+                    <Text style={styles.tempDetailValue}>{Math.round(item.temp.morn || item.temp.min)}°C</Text>
                   </View>
                   <View style={styles.tempDetailItem}>
-                    <Ionicons name="sunny-outline" size={20} color={theme.textColor} />
-                    <Text style={[styles.tempDetailLabel, { color: theme.textColor }]}>Wieczór</Text>
-                    <Text style={[styles.tempDetailValue, { color: theme.textColor }]}>
-                      {Math.round(item.temp.eve || item.temp.max)}°C
-                    </Text>
+                    <Ionicons name="sunny-outline" size={20} color="white" />
+                    <Text style={styles.tempDetailLabel}>Wieczór</Text>
+                    <Text style={styles.tempDetailValue}>{Math.round(item.temp.eve || item.temp.max)}°C</Text>
                   </View>
                 </View>
               </View>
@@ -239,50 +350,44 @@ export default function ForecastScreen() {
 
               <View style={styles.detailsGrid}>
                 <View style={styles.detailGridItem}>
-                  <Ionicons name="water-outline" size={24} color={theme.textColor} />
-                  <Text style={[styles.detailGridLabel, { color: theme.textColor }]}>Wilgotność</Text>
-                  <Text style={[styles.detailGridValue, { color: theme.textColor }]}>{item.humidity}%</Text>
+                  <Ionicons name="water-outline" size={24} color="white" />
+                  <Text style={styles.detailGridLabel}>Wilgotność</Text>
+                  <Text style={styles.detailGridValue}>{item.humidity}%</Text>
                 </View>
 
                 <View style={styles.detailGridItem}>
-                  <Ionicons name="speedometer-outline" size={24} color={theme.textColor} />
-                  <Text style={[styles.detailGridLabel, { color: theme.textColor }]}>Ciśnienie</Text>
-                  <Text style={[styles.detailGridValue, { color: theme.textColor }]}>{item.pressure} hPa</Text>
+                  <Ionicons name="speedometer-outline" size={24} color="white" />
+                  <Text style={styles.detailGridLabel}>Ciśnienie</Text>
+                  <Text style={styles.detailGridValue}>{item.pressure} hPa</Text>
                 </View>
 
                 <View style={styles.detailGridItem}>
-                  <Ionicons name="cloud-outline" size={24} color={theme.textColor} />
-                  <Text style={[styles.detailGridLabel, { color: theme.textColor }]}>Zachmurzenie</Text>
-                  <Text style={[styles.detailGridValue, { color: theme.textColor }]}>{item.clouds}%</Text>
+                  <Ionicons name="cloud-outline" size={24} color="white" />
+                  <Text style={styles.detailGridLabel}>Zachmurzenie</Text>
+                  <Text style={styles.detailGridValue}>{item.clouds}%</Text>
                 </View>
 
                 <View style={styles.detailGridItem}>
-                  <Ionicons name="eye-outline" size={24} color={theme.textColor} />
-                  <Text style={[styles.detailGridLabel, { color: theme.textColor }]}>Widoczność</Text>
-                  <Text style={[styles.detailGridValue, { color: theme.textColor }]}>
-                    {(item.visibility / 1000).toFixed(1)} km
-                  </Text>
+                  <Ionicons name="eye-outline" size={24} color="white" />
+                  <Text style={styles.detailGridLabel}>Widoczność</Text>
+                  <Text style={styles.detailGridValue}>{(item.visibility / 1000).toFixed(1)} km</Text>
                 </View>
 
                 <View style={styles.detailGridItem}>
-                  <Ionicons name="rainy-outline" size={24} color={theme.textColor} />
-                  <Text style={[styles.detailGridLabel, { color: theme.textColor }]}>Opady</Text>
-                  <Text style={[styles.detailGridValue, { color: theme.textColor }]}>
-                    {Math.round(item.pop * 100)}%
-                  </Text>
+                  <Ionicons name="rainy-outline" size={24} color="white" />
+                  <Text style={styles.detailGridLabel}>Opady</Text>
+                  <Text style={styles.detailGridValue}>{Math.round(item.pop * 100)}%</Text>
                 </View>
 
                 <View style={styles.detailGridItem}>
-                  <Ionicons name="compass-outline" size={24} color={theme.textColor} />
-                  <Text style={[styles.detailGridLabel, { color: theme.textColor }]}>Wiatr</Text>
-                  <Text style={[styles.detailGridValue, { color: theme.textColor }]}>
-                    {Math.round(item.wind * 3.6)} km/h
-                  </Text>
+                  <Ionicons name="compass-outline" size={24} color="white" />
+                  <Text style={styles.detailGridLabel}>Wiatr</Text>
+                  <Text style={styles.detailGridValue}>{Math.round(item.wind * 3.6)} km/h</Text>
                 </View>
               </View>
             </View>
-          )}
-        </LinearGradient>
+          </Animated.View>
+        </View>
       </Animated.View>
     )
   }
@@ -296,7 +401,7 @@ export default function ForecastScreen() {
 
       {loading && !refreshing ? (
         <View style={styles.loaderContainer}>
-          <ActivityIndicator size="large" color="#1DA1F2" />
+          <ActivityIndicator size="large" color={theme.accentColor} />
           <Text style={[styles.loadingText, { color: theme.secondaryTextColor }]}>Pobieranie prognozy...</Text>
         </View>
       ) : error ? (
@@ -320,10 +425,11 @@ export default function ForecastScreen() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              colors={["#1DA1F2"]}
+              colors={[theme.accentColor]}
               tintColor={theme.accentColor}
             />
           }
+          showsVerticalScrollIndicator={false}
         />
       ) : (
         <View style={styles.emptyContainer}>
@@ -408,6 +514,11 @@ const styles = StyleSheet.create({
   forecastItem: {
     borderRadius: 16,
     overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 4,
   },
   forecastHeader: {
     flexDirection: "row",
@@ -422,6 +533,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
     textTransform: "capitalize",
+    color: "white",
   },
   weatherIconContainer: {
     flexDirection: "row",
@@ -436,6 +548,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textTransform: "capitalize",
     marginLeft: 4,
+    color: "white",
   },
   tempContainer: {
     flexDirection: "row",
@@ -444,14 +557,17 @@ const styles = StyleSheet.create({
   maxTemp: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#FF6B6B",
+    color: "white",
     marginRight: 8,
   },
   minTemp: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#4ECDC4",
+    color: "rgba(255,255,255,0.7)",
     marginRight: 12,
+  },
+  expandedContentWrapper: {
+    overflow: "hidden",
   },
   expandedContent: {
     padding: 16,
@@ -462,6 +578,43 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.2)",
     marginVertical: 12,
   },
+  hourlyContainer: {
+    marginBottom: 16,
+  },
+  hourlyList: {
+    paddingVertical: 8,
+  },
+  hourlyItemWrapper: {
+    marginRight: 12,
+  },
+  hourlyItem: {
+    padding: 12,
+    borderRadius: 12,
+    alignItems: "center",
+    width: 90,
+  },
+  hourlyTime: {
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  hourlyIcon: {
+    width: 50,
+    height: 50,
+  },
+  hourlyTemp: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginVertical: 4,
+  },
+  hourlyDetailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 4,
+  },
+  hourlyDetailText: {
+    fontSize: 12,
+    marginLeft: 4,
+  },
   temperatureSection: {
     marginBottom: 16,
   },
@@ -469,6 +622,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "bold",
     marginBottom: 12,
+    color: "white",
   },
   tempDetails: {
     flexDirection: "row",
@@ -487,9 +641,11 @@ const styles = StyleSheet.create({
   tempDetailLabel: {
     marginLeft: 8,
     flex: 1,
+    color: "white",
   },
   tempDetailValue: {
     fontWeight: "bold",
+    color: "white",
   },
   detailsGrid: {
     flexDirection: "row",
@@ -507,10 +663,12 @@ const styles = StyleSheet.create({
   detailGridLabel: {
     marginTop: 4,
     fontSize: 12,
+    color: "white",
   },
   detailGridValue: {
     marginTop: 4,
     fontSize: 16,
     fontWeight: "bold",
+    color: "white",
   },
 })
