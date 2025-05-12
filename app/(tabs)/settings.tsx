@@ -16,6 +16,10 @@ const ACCENT_COLORS = [
   "#FF5722", 
   "#00BCD4",
   "#FFEB3B",
+  "#E33EE6",
+  "#78d955",
+  "#83e9f2",
+  "#ff0400",
 ]
 
 const COLOR_SCHEMES: { label: string; value: ColorScheme }[] = [
