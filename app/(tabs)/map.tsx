@@ -1,19 +1,37 @@
 "use client"
 
 import { useRouter } from "expo-router"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ActivityIndicator, SafeAreaView, StyleSheet, Text, View } from "react-native"
 import { WebView } from "react-native-webview"
 import { useSearchStore } from "../../hooks/useSearchStore"
 import { useTheme } from "../../hooks/useTheme"
+import { fetchCurrentWeather, type WeatherData } from "../../utils/api"
 
 export default function WeatherMapScreen() {
   const { theme, isDark } = useTheme()
   const router = useRouter()
   const { city } = useSearchStore()
   const [loading, setLoading] = useState(true)
+  const [weather, setWeather] = useState<WeatherData | null>(null)
 
-  const mapUrl = `https://openweathermap.org/weathermap?basemap=map&cities=true&layer=temperature&zoom=10`
+  useEffect(() => {
+    const loadWeatherData = async () => {
+      if (city) {
+        try {
+          const data = await fetchCurrentWeather(city)
+          setWeather(data)
+        } catch (error) {
+          console.error("Error loading weather data:", error)
+        }
+      }
+    }
+    loadWeatherData()
+  }, [city])
+
+  const mapUrl = weather 
+    ? `https://openweathermap.org/weathermap?basemap=map&cities=true&layer=temperature&lat=${weather.coord.lat}&lon=${weather.coord.lon}&zoom=10`
+    : `https://openweathermap.org/weathermap?basemap=map&cities=true&layer=temperature&zoom=10`
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.backgroundColor }]}>

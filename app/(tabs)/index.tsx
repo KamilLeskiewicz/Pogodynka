@@ -9,7 +9,6 @@ import {
   Animated,
   Easing,
   FlatList,
-  Image,
   KeyboardAvoidingView,
   Platform,
   RefreshControl,
@@ -194,13 +193,64 @@ export default function CurrentWeatherScreen() {
     }
   }, [city, toggleFavorite])
 
+  const getWeatherIcon = (iconCode: string) => {
+    switch (iconCode) {
+      case "01d":
+        return "sunny"
+      case "01n":
+        return "moon"
+      case "02d":
+        return "partly-sunny"
+      case "02n":
+        return "cloudy-night"
+      case "03d":
+      case "03n":
+        return "cloud"
+      case "04d":
+      case "04n":
+        return "cloudy"
+      case "09d":
+      case "09n":
+        return "rainy"
+      case "10d":
+        return "thunderstorm"
+      case "10n":
+        return "thunderstorm"
+      case "11d":
+      case "11n":
+        return "thunderstorm"
+      case "13d":
+      case "13n":
+        return "snow"
+      case "50d":
+      case "50n":
+        return "water"
+      default:
+        return "partly-sunny"
+    }
+  }
+
+  const renderWeatherIcon = () => {
+    if (!weather?.weather[0]?.icon) return null
+
+    return (
+      <Ionicons 
+        name={getWeatherIcon(weather.weather[0].icon)} 
+        size={120} 
+        color="white" 
+      />
+    )
+  }
+
   const renderHourlyItem = useCallback(({ item }: { item: HourlyForecastItem }) => {
     return (
       <View style={[styles.hourlyItem, { backgroundColor: theme.cardBackground }]}>
         <Text style={[styles.hourlyTime, { color: theme.textColor }]}>{formatHourlyTime(item.dt_txt)}</Text>
         <Text style={[styles.hourlyDate, { color: theme.secondaryTextColor }]}>{formatHourlyDate(item.dt_txt)}</Text>
-        <Image
-          source={{ uri: `https://openweathermap.org/img/wn/${item.weather.icon}@2x.png` }}
+        <Ionicons 
+          name={getWeatherIcon(item.weather.icon)} 
+          size={40} 
+          color={theme.textColor} 
           style={styles.hourlyIcon}
         />
         <Text style={[styles.hourlyTemp, { color: theme.textColor }]}>
@@ -252,10 +302,6 @@ export default function CurrentWeatherScreen() {
     }
   }, [weather])
 
-  const getWeatherIcon = (iconCode: string) => {
-    return `https://openweathermap.org/img/wn/${iconCode}@4x.png`
-  }
-
   const getWeatherColor = (weatherMain: string): string => {
     switch (weatherMain.toLowerCase()) {
       case "clear":
@@ -304,17 +350,6 @@ export default function CurrentWeatherScreen() {
 
   const openWeatherMap = () => {
     router.push("/map")
-  }
-
-  const renderWeatherIcon = () => {
-    if (!weather?.weather[0]?.icon) return null
-
-    return (
-      <Image 
-        source={{ uri: getWeatherIcon(weather.weather[0].icon) }} 
-        style={styles.weatherIcon} 
-      />
-    )
   }
 
   return (
@@ -671,8 +706,7 @@ const styles = StyleSheet.create({
     marginVertical: 16,
   },
   weatherIcon: {
-    width: 150,
-    height: 150,
+    marginVertical: 16,
   },
   temperature: {
     fontSize: 72,
@@ -754,8 +788,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   hourlyIcon: {
-    width: 50,
-    height: 50,
+    marginVertical: 8,
   },
   hourlyTemp: {
     fontSize: 18,
